@@ -267,6 +267,10 @@ class HotbarDetector:
         if roi_bgr is None or roi_bgr.size == 0:
             return {'success': False, 'reason': 'Empty frame'}
 
+        # Detect black frame / dark map transition screen
+        if float(np.mean(roi_bgr)) < 25.0 or int(np.max(roi_bgr)) < 50:
+            return {'success': False, 'reason': 'Screen is black (map transition / loading)'}
+
         roi_h, roi_w, _ = roi_bgr.shape
 
         best_val = -1

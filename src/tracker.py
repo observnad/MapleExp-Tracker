@@ -22,6 +22,7 @@ class ExpTracker:
         self.last_sample = None
         self.level_ups = 0
         self.is_paused = False
+        self._pending_drop = None
 
     def reset(self):
         """Resets all tracking statistics and begins a new session."""
@@ -33,9 +34,26 @@ class ExpTracker:
         self.total_gained_pct = 0.0
         self.last_sample = None
         self.level_ups = 0
+        self._pending_drop = None
+
+    def _commit_sample(self, sample, delta_exp, delta_pct, is_level_up=False):
+        if is_level_up:
+            self.level_ups += 1
+        if delta_exp > 0:
+            self.total_gained_exp += delta_exp
+        if delta_pct > 0:
+            self.total_gained_pct += delta_pct
+
+        self.last_sample = sample
+        self.history.append(sample)
+
+        # Prune old samples
+        cutoff = sample.timestamp - self.max_history_seconds
+        while self.history and self.history[0].timestamp < cutoff:
+            self.history.popleft()
 
     def add_sample(self, exp_val, exp_pct, bar_pct=None):
-        """Records a new EXP observation."""
+        """Records a new EXP observation with portal transition & transient drop immunity."""
         if self.is_paused or exp_val is None:
             return
 
@@ -50,30 +68,83 @@ class ExpTracker:
             self.history.append(sample)
             return
 
+        # 1. Resolve pending drop from previous frame if one exists
+        if self._pending_drop is not None:
+            cand_sample, prev_sample, est_d_exp, est_d_pct, is_potential_lvl = self._pending_drop
+            self._pending_drop = None
+
+            # Check if this new sample reverted back near prev_sample.
+            # During portal transitions, the screen goes black and the game UI momentarily
+            # reads 0 EXP or transiently drops before map loading completes.
+            # If the EXP jumps right back near previous EXP, it was a portal / glitch artifact!
+            reverted = (exp_val >= prev_sample.exp_val * 0.95 and
+                        (prev_sample.exp_pct is None or exp_pct is None or exp_pct >= prev_sample.exp_pct - 2.0))
+
+            if reverted:
+                # Glitch / portal drop confirmed! Discard cand_sample completely.
+                # Process current sample against the true prev_sample.
+                prev = prev_sample
+                delta_exp = exp_val - prev.exp_val
+                delta_pct = (exp_pct - prev.exp_pct) if (exp_pct is not None and prev.exp_pct is not None) else 0.0
+                if delta_exp >= 0:
+                    self._commit_sample(sample, delta_exp, delta_pct, False)
+                return
+            else:
+                # Drop was confirmed real (character stayed at new EXP)!
+                self._commit_sample(cand_sample, est_d_exp, est_d_pct, is_potential_lvl)
+                prev = cand_sample
+                delta_exp = exp_val - prev.exp_val
+                delta_pct = (exp_pct - prev.exp_pct) if (exp_pct is not None and prev.exp_pct is not None) else 0.0
+                if delta_exp >= 0:
+                    self._commit_sample(sample, delta_exp, delta_pct, False)
+                return
+
         # Check for change since last sample
         prev = self.last_sample
         if prev is not None:
             delta_exp = exp_val - prev.exp_val
             delta_pct = (exp_pct - prev.exp_pct) if (exp_pct is not None and prev.exp_pct is not None) else 0.0
 
-            # Level-up detection (current exp dropped significantly)
-            if delta_exp < 0 and (prev.exp_pct is None or prev.exp_pct > 50.0):
-                self.level_ups += 1
-                # Estimate remaining exp of previous level
-                if prev.exp_pct is not None and prev.exp_pct > 0:
-                    est_max = int(prev.exp_val / (prev.exp_pct / 100.0))
-                    gained_before_lvl = max(0, est_max - prev.exp_val)
-                    delta_exp = gained_before_lvl + exp_val
-                    delta_pct = (100.0 - prev.exp_pct) + (exp_pct if exp_pct else 0.0)
-                else:
-                    delta_exp = exp_val
-                    delta_pct = exp_pct if exp_pct else 0.0
+            if delta_exp < 0:
+                # In MapleStory, you cannot level up unless previous percentage was near 100% (>= 80%).
+                # And after leveling up, the new percentage resets to low (<= 25%).
+                is_legit_lvl = (prev.exp_pct is not None and prev.exp_pct >= 80.0 and
+                                exp_pct is not None and exp_pct <= 25.0)
 
-            # Only accumulate positive or zero progression
-            if delta_exp > 0:
-                self.total_gained_exp += delta_exp
-                if delta_pct > 0:
-                    self.total_gained_pct += delta_pct
+                if is_legit_lvl:
+                    # Estimate remaining exp of previous level
+                    if prev.exp_pct > 0:
+                        est_max = int(prev.exp_val / (prev.exp_pct / 100.0))
+                        gained_before_lvl = max(0, est_max - prev.exp_val)
+                        est_d_exp = gained_before_lvl + exp_val
+                        est_d_pct = (100.0 - prev.exp_pct) + (exp_pct if exp_pct else 0.0)
+                    else:
+                        est_d_exp = exp_val
+                        est_d_pct = exp_pct if exp_pct else 0.0
+
+                    # Buffer for 1-frame confirmation so transient drops never fake a level-up
+                    self._pending_drop = (sample, prev, est_d_exp, est_d_pct, True)
+                    return
+
+                # Check if it was legitimate character death
+                # MapleStory death penalty loses 5% to 10% EXP (between 2% and 15% drop).
+                is_death = (prev.exp_pct is not None and exp_pct is not None and
+                            2.0 <= (prev.exp_pct - exp_pct) <= 15.0 and
+                            exp_val > 0)
+                if is_death:
+                    # Character died: update current EXP baseline without counting fake level-up or gain
+                    self.last_sample = sample
+                    self.history.append(sample)
+                    return
+
+                # Sudden drop that is neither a level-up nor death (e.g. portal transition, OCR blip):
+                # Buffer as pending drop to confirm whether it reverts on next frame
+                self._pending_drop = (sample, prev, 0, 0.0, False)
+                return
+
+            # Normal progression (delta_exp >= 0)
+            self._commit_sample(sample, delta_exp, delta_pct, False)
+            return
 
         self.last_sample = sample
         self.history.append(sample)
@@ -140,8 +211,8 @@ class ExpTracker:
             d_exp = s2.exp_val - s1.exp_val
             d_pct = (s2.exp_pct - s1.exp_pct) if (s2.exp_pct is not None and s1.exp_pct is not None) else 0.0
 
-            if d_exp < 0 and (s1.exp_pct is None or s1.exp_pct > 50.0):
-                # Level up in window
+            if d_exp < 0 and (s1.exp_pct is not None and s1.exp_pct >= 80.0 and (s2.exp_pct is None or s2.exp_pct <= 25.0)):
+                # Legitimate level up in window
                 if s1.exp_pct is not None and s1.exp_pct > 0:
                     est_max = int(s1.exp_val / (s1.exp_pct / 100.0))
                     d_exp = max(0, est_max - s1.exp_val) + s2.exp_val
@@ -149,6 +220,9 @@ class ExpTracker:
                 else:
                     d_exp = s2.exp_val
                     d_pct = s2.exp_pct if s2.exp_pct else 0.0
+            elif d_exp < 0:
+                d_exp = 0
+                d_pct = 0.0
 
             if d_exp > 0:
                 gained_exp += d_exp

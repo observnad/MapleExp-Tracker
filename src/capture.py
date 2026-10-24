@@ -1,6 +1,7 @@
 import ctypes
 from ctypes import wintypes
 import threading
+import time
 import numpy as np
 
 user32 = ctypes.windll.user32
@@ -162,6 +163,13 @@ class WindowCapture:
         # Method 1: Windows.Graphics.Capture (Works through overlapping windows!)
         if self.wgc_worker:
             wgc_frame = self.wgc_worker.get_frame()
+            if wgc_frame is None:
+                # Wait up to 300ms for first frame if worker was just created
+                for _ in range(6):
+                    time.sleep(0.05)
+                    wgc_frame = self.wgc_worker.get_frame()
+                    if wgc_frame is not None:
+                        break
             if wgc_frame is not None and wgc_frame.shape[0] > 100 and wgc_frame.shape[1] > 100:
                 fh, fw, _ = wgc_frame.shape
                 roi_h = max(30, int(fh * bottom_ratio))

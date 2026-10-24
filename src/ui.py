@@ -553,19 +553,38 @@ class TrackerUI(ctk.CTk):
         self.selected_cell = (row, col)
         self.controller.set_monitored_cell(row, col)
 
+        # Retrieve this cell's individual alert settings
+        data = self.controller.get_latest_state()
+        hotbar_data = data.get('hotbar', {})
+        cell_alerts = hotbar_data.get('cell_alerts', {})
+        cfg = cell_alerts.get((row, col), {'threshold': 20, 'enabled': False})
+        triggered_coords = {t['cell'] for t in hotbar_data.get('alert_triggered_cells', [])}
+
         # Update button borders
         for (r, c), btn in self.grid_buttons.items():
-            if (r, c) == self.selected_cell:
+            if (r, c) in triggered_coords:
+                btn.configure(border_width=2, border_color="#e74c3c")
+            elif (r, c) == self.selected_cell:
                 btn.configure(border_width=2, border_color="#f1c40f")
+            elif cell_alerts.get((r, c), {}).get('enabled', False):
+                btn.configure(border_width=2, border_color="#3498db")
             else:
                 btn.configure(border_width=1, border_color="#383a40")
 
         key_name = KEY_NAMES[row][col]
         self.lbl_selected_target.configure(text=f"🎯 Key: {key_name} [Row {row}, Col {col}]")
 
+        # Update threshold entry and switch for this cell
+        self.entry_threshold.delete(0, "end")
+        self.entry_threshold.insert(0, str(cfg.get('threshold', 20)))
+
+        if cfg.get('enabled', False):
+            self.switch_alert.select()
+        else:
+            self.switch_alert.deselect()
+
         # Update current quantity label
-        data = self.controller.get_latest_state()
-        quantities = data.get('hotbar', {}).get('quantities', {})
+        quantities = hotbar_data.get('quantities', {})
         qty = quantities.get((row, col))
         self.lbl_current_qty.configure(text=str(qty) if qty is not None else "--")
 
@@ -577,23 +596,27 @@ class TrackerUI(ctk.CTk):
         new_val = max(0, curr + delta)
         self.entry_threshold.delete(0, "end")
         self.entry_threshold.insert(0, str(new_val))
-        self.controller.set_min_threshold(new_val)
+        r, c = self.selected_cell
+        self.controller.set_cell_threshold(r, c, new_val)
 
     def _set_preset_threshold(self, val):
         self.entry_threshold.delete(0, "end")
         self.entry_threshold.insert(0, str(val))
-        self.controller.set_min_threshold(val)
+        r, c = self.selected_cell
+        self.controller.set_cell_threshold(r, c, val)
 
     def _on_threshold_entry_changed(self, event=None):
         try:
             val = int(self.entry_threshold.get().strip())
-            self.controller.set_min_threshold(val)
+            r, c = self.selected_cell
+            self.controller.set_cell_threshold(r, c, val)
         except ValueError:
             pass
 
     def _on_alert_toggle(self):
         enabled = (self.switch_alert.get() == 1)
-        self.controller.set_alert_enabled(enabled)
+        r, c = self.selected_cell
+        self.controller.set_cell_alert_enabled(r, c, enabled)
 
     def _toggle_always_on_top(self):
         self.always_on_top = not self.always_on_top
@@ -650,20 +673,29 @@ class TrackerUI(ctk.CTk):
         details = data.get('details', '')
         hotbar_data = data.get('hotbar', {})
         is_alert = hotbar_data.get('alert_triggered', False)
+        triggered_cells = hotbar_data.get('alert_triggered_cells', [])
+        triggered_coords = {t['cell'] for t in triggered_cells}
+        cell_alerts = hotbar_data.get('cell_alerts', {})
 
         # Apply red theme if alert is triggered
         self._set_theme_color(is_alert)
 
         if is_alert:
-            sel_r, sel_c = self.selected_cell
-            sel_key = KEY_NAMES[sel_r][sel_c]
-            curr_q = hotbar_data.get('monitored_qty', '--')
-            thresh = hotbar_data.get('min_threshold', 20)
+            # Format message for all triggered items
+            triggered_msgs = []
+            for t in triggered_cells:
+                r, c = t['cell']
+                k = KEY_NAMES[r][c]
+                q = t['qty']
+                th = t['threshold']
+                triggered_msgs.append(f"{k} ({q} < {th})")
+
+            summary_str = ", ".join(triggered_msgs)
             self.alert_banner_label.configure(
-                text=f"🚨 ALERT: {sel_key} [Row {sel_r}, Col {sel_c}] has {curr_q} items (drops below {thresh})!"
+                text=f"🚨 LOW ITEM WARNING: {summary_str}!"
             )
             self.status_label.configure(
-                text=f"🚨 ALERT: Item {sel_key} quantity is low ({curr_q} < {thresh})!",
+                text=f"🚨 ALERT: Low Item Quantity: {summary_str}!",
                 text_color="#ff7675"
             )
         elif status == 'LOCKED':
@@ -758,9 +790,12 @@ class TrackerUI(ctk.CTk):
                             pass
 
                     # Highlight border
-                    if (r, c) == self.selected_cell:
-                        border_col = "#e74c3c" if is_alert else "#f1c40f"
-                        btn.configure(border_width=2, border_color=border_col)
+                    if (r, c) in triggered_coords:
+                        btn.configure(border_width=2, border_color="#e74c3c")
+                    elif (r, c) == self.selected_cell:
+                        btn.configure(border_width=2, border_color="#f1c40f")
+                    elif cell_alerts.get((r, c), {}).get('enabled', False):
+                        btn.configure(border_width=2, border_color="#3498db")
                     else:
                         btn.configure(border_width=1, border_color="#383a40")
 

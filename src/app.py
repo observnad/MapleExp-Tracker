@@ -37,11 +37,17 @@ class AppController:
         self._is_running = True
         self._is_paused = False
 
-        # Hotbar alert configuration
-        # Default to row 2, col 3 (Pdn key with orange 49)
+        # Per-cell alert configuration: (row, col) -> {'threshold': int, 'enabled': bool}
+        self.cell_alerts = {}
+        for r in range(3):
+            for c in range(4):
+                self.cell_alerts[(r, c)] = {
+                    'threshold': 20,
+                    'enabled': False
+                }
+        # Default: enable monitoring on (2, 3) (Pdn / orange 49) with threshold 20
+        self.cell_alerts[(2, 3)] = {'threshold': 20, 'enabled': True}
         self.monitored_cell = (2, 3)
-        self.min_threshold = 20
-        self.alert_enabled = True
         self.previous_quantities = {}
 
         self.latest_state = {
@@ -66,8 +72,8 @@ class AppController:
                 'quantities': {},
                 'monitored_cell': (2, 3),
                 'monitored_qty': None,
-                'min_threshold': 20,
-                'alert_enabled': True,
+                'cell_alerts': {k: dict(v) for k, v in self.cell_alerts.items()},
+                'alert_triggered_cells': [],
                 'alert_triggered': False
             }
         }
@@ -81,31 +87,61 @@ class AppController:
             self.monitored_cell = (row, col)
             self._update_alert_status()
 
-    def set_min_threshold(self, threshold: int):
+    def set_cell_threshold(self, row: int, col: int, threshold: int):
         with self._lock:
-            self.min_threshold = max(0, int(threshold))
+            if (row, col) not in self.cell_alerts:
+                self.cell_alerts[(row, col)] = {'threshold': 20, 'enabled': False}
+            self.cell_alerts[(row, col)]['threshold'] = max(0, int(threshold))
             self._update_alert_status()
 
-    def set_alert_enabled(self, enabled: bool):
+    def set_cell_alert_enabled(self, row: int, col: int, enabled: bool):
         with self._lock:
-            self.alert_enabled = bool(enabled)
+            if (row, col) not in self.cell_alerts:
+                self.cell_alerts[(row, col)] = {'threshold': 20, 'enabled': False}
+            self.cell_alerts[(row, col)]['enabled'] = bool(enabled)
             self._update_alert_status()
+
+    # Backwards-compatible shortcuts for current monitored cell
+    def set_min_threshold(self, threshold: int):
+        r, c = self.monitored_cell
+        self.set_cell_threshold(r, c, threshold)
+
+    def set_alert_enabled(self, enabled: bool):
+        r, c = self.monitored_cell
+        self.set_cell_alert_enabled(r, c, enabled)
 
     def _update_alert_status(self):
         hotbar = self.latest_state.get('hotbar', {})
-        quantities = hotbar.get('quantities', {})
-        qty = quantities.get(self.monitored_cell)
-        is_low = False
-        if self.alert_enabled and self.monitored_cell in quantities:
-            if qty is not None and qty < self.min_threshold:
-                is_low = True
-            elif qty is None and self.previous_quantities.get(self.monitored_cell) is not None:
-                is_low = True
+        hotbar['cell_alerts'] = {k: dict(v) for k, v in self.cell_alerts.items()}
         hotbar['monitored_cell'] = self.monitored_cell
-        hotbar['monitored_qty'] = qty
-        hotbar['min_threshold'] = self.min_threshold
-        hotbar['alert_enabled'] = self.alert_enabled
-        hotbar['alert_triggered'] = is_low
+
+        # If hotbar is not found / detected, do not trigger alerts
+        if not hotbar.get('found', False):
+            hotbar['alert_triggered'] = False
+            hotbar['alert_triggered_cells'] = []
+            hotbar['monitored_qty'] = None
+            return
+
+        quantities = hotbar.get('quantities', {})
+        hotbar['monitored_qty'] = quantities.get(self.monitored_cell)
+
+        alert_triggered_cells = []
+        for cell_coord, cfg in self.cell_alerts.items():
+            if not cfg.get('enabled', False):
+                continue
+            thresh = cfg.get('threshold', 20)
+            qty = quantities.get(cell_coord)
+            effective_qty = 0 if qty is None else qty
+            if effective_qty < thresh:
+                alert_triggered_cells.append({
+                    'cell': cell_coord,
+                    'qty': effective_qty,
+                    'threshold': thresh
+                })
+
+        is_any_alert = (len(alert_triggered_cells) > 0)
+        hotbar['alert_triggered_cells'] = alert_triggered_cells
+        hotbar['alert_triggered'] = is_any_alert
 
     def toggle_pause(self):
         with self._lock:
@@ -205,27 +241,14 @@ class AppController:
                         if v is not None:
                             self.previous_quantities[k] = v
 
-                    qty = quantities.get(self.monitored_cell)
-                    is_low = False
-                    if self.alert_enabled and self.monitored_cell in quantities:
-                        if qty is not None and qty < self.min_threshold:
-                            is_low = True
-                        elif qty is None and self.previous_quantities.get(self.monitored_cell) is not None:
-                            is_low = True
-
-                    self.latest_state['hotbar'] = {
-                        'found': True,
-                        'grid_crop_bgr': hotbar_res['grid_crop_bgr'],
-                        'cells': hotbar_res['cells'],
-                        'quantities': quantities,
-                        'monitored_cell': self.monitored_cell,
-                        'monitored_qty': qty,
-                        'min_threshold': self.min_threshold,
-                        'alert_enabled': self.alert_enabled,
-                        'alert_triggered': is_low
-                    }
+                    self.latest_state['hotbar']['found'] = True
+                    self.latest_state['hotbar']['grid_crop_bgr'] = hotbar_res['grid_crop_bgr']
+                    self.latest_state['hotbar']['cells'] = hotbar_res['cells']
+                    self.latest_state['hotbar']['quantities'] = quantities
+                    self._update_alert_status()
                 else:
                     self.latest_state['hotbar']['found'] = False
+                    self.latest_state['hotbar']['alert_triggered'] = False
 
             # 1 Hz sampling rate (sleep remaining time of the 1-second interval)
             elapsed = time.time() - start_t

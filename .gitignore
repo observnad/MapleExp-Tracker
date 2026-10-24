@@ -1,0 +1,6 @@
+.venv/
+build/
+debug_captures/
+__pycache__/
+*.pyc
+*.spec

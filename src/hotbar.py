@@ -2,6 +2,25 @@ import base64
 import cv2
 import numpy as np
 
+# Base64 encoded PNG of the bottom metallic frame border of the 3x4 quickslot hotbar (147x8 at 1.0x scale)
+# Located at y=104 inside the 147x112 box. This frame border NEVER changes regardless of items placed in cells!
+FRAME_BOTTOM_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAJMAAAAICAIAAAByJlrCAAACqklEQVRIDe3BQYtVdRzH4c/3f2aYmWtQ"
+    "tEmzwqhF9B5a9A6iEKIgxKXQrvfSMgTbhIi0adXbkBYFEtbkJgp1kpzz+3TOuXNnzh276TLB54n6wYef"
+    "Pjhsi8Xea6+e7Vr7bf/Oz7d/vP3TD0BVqUyqihk1CTOtNVaSMGmt8RSqSmVSVcyoSZhprbGShElrjadQ"
+    "VSqTqmJGTcJMa42VJExaazxJValMqooZNQkzrTVWkjBprTG58NY7b1x4+5Vz56vqzq93/fs+5NsbX+fR"
+    "o0cfXfzswWEDFovd8+fOdq2xIqMwkoFAGERkSQghbKQMwhoZhZmwkczJMSGE8BREJmEQUAZhJBDCijxO"
+    "IAwCiBxJGImcCMhGAcJ/EcKRvvpf9u8eHDxcbBXh5vVruXfv3sefXD447JjsLXZffunFF84smMgojEQm"
+    "ISLHhDAI4V8oS2GNjMIkPIEMZBSQJRmFQQibyUBWwkiOBQRCWJE5mQkBRI4kjEROBGSjgGEQNhDC6P6D"
+    "g9//+POvg4eEva1Sb16/lv39/UuXr7CBzKgkRCyrSkDp+0rSda3rEjJgJAMBi1E4TU5EEuRxSUAGIitq"
+    "ldU7SNe2txokIQySsKSohX1V9YJJupYBJCFAwIhABoSRMicEEUMGYK99X8p21waAFqMwSFBOk0GCgCEk"
+    "rJGJzIkRkojKjW+u5tatW8CVz79gSU4RwkpaaVVZldYAy8OqJF2SRktrCQGVIw6QOZE5gSSsC2RAAEUE"
+    "A0KpBVLaWra2OiAQoAUSUPrqy6qyL7qQhEmAJI1GBoAQJglLSsJAWRPC4LAvq5DW5QgkIZwQAWUihDCSp"
+    "YQ1siRrEkipeO2rL3d2dvLmme2r333Pc/97SVpr29vbOzs7l95/L7u7uzz3rLn47utRee5Zs7e39w/Vo"
+    "1+iF2GY3QAAAABJRU5ErkJggg=="
+)
+
+# Secondary fallback anchor: Ctrl button (31x31)
 CTRL_BTN_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAB8AAAAfCAIAAACQzIFuAAAEYUlEQVRIDa3BsYrkRgKA4b8wHDPM3kKZ"
     "Np10YvkOpcfJyBgMAsM8Qm/gSGCQnkCoEkVKquh9ASlSPHqE7kQOheTMgQLVGrOJ8SHB3jYzLBjd0py4"
@@ -31,25 +50,26 @@ KEY_NAMES = [
     ["Ctrl", "Del", "End", "Pdn"]
 ]
 
+# Pixel-exact bitmap templates for MapleStory quantity font (9px tall)
 DIGIT_TEMPLATES = {
     '1': np.array([
-        [0, 1, 0, 0],
-        [1, 1, 1, 0],
-        [0, 1, 0, 0],
-        [0, 1, 0, 0],
-        [0, 1, 0, 0],
-        [0, 1, 0, 0],
-        [0, 1, 0, 0],
-        [0, 1, 0, 0],
-        [0, 1, 0, 0]
+        [0, 1, 0],
+        [1, 1, 1],
+        [0, 1, 0],
+        [0, 1, 0],
+        [0, 1, 0],
+        [0, 1, 0],
+        [0, 1, 0],
+        [0, 1, 0],
+        [0, 1, 0]
     ], dtype=int),
     '0': np.array([
         [0, 1, 1, 1, 1, 0],
         [1, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 1],
+        [1, 0, 1, 1, 0, 1],
+        [1, 0, 1, 1, 0, 1],
+        [1, 0, 1, 1, 0, 1],
+        [1, 0, 1, 1, 0, 1],
         [1, 0, 0, 0, 0, 1],
         [1, 0, 0, 0, 0, 1],
         [0, 1, 1, 1, 1, 0]
@@ -58,9 +78,9 @@ DIGIT_TEMPLATES = {
         [0, 1, 1, 1, 1, 0],
         [1, 0, 0, 0, 0, 1],
         [0, 0, 0, 0, 0, 1],
+        [0, 0, 0, 0, 0, 1],
         [0, 0, 0, 0, 1, 0],
-        [0, 0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0, 0],
+        [0, 0, 1, 1, 0, 0],
         [0, 1, 0, 0, 0, 0],
         [1, 0, 0, 0, 0, 0],
         [1, 1, 1, 1, 1, 1]
@@ -68,9 +88,9 @@ DIGIT_TEMPLATES = {
     '3': np.array([
         [0, 1, 1, 1, 1, 0],
         [1, 0, 0, 0, 0, 1],
+        [0, 0, 1, 1, 0, 1],
         [0, 0, 0, 0, 0, 1],
         [0, 0, 1, 1, 1, 0],
-        [0, 0, 0, 0, 0, 1],
         [0, 0, 0, 0, 0, 1],
         [0, 0, 0, 0, 0, 1],
         [1, 0, 0, 0, 0, 1],
@@ -90,7 +110,7 @@ DIGIT_TEMPLATES = {
     '5': np.array([
         [1, 1, 1, 1, 1, 1],
         [1, 0, 0, 0, 0, 0],
-        [1, 0, 0, 0, 0, 0],
+        [1, 0, 0, 0, 0, 1],
         [1, 1, 1, 1, 1, 0],
         [0, 0, 0, 0, 0, 1],
         [0, 0, 0, 0, 0, 1],
@@ -155,17 +175,17 @@ def parse_cell_quantity(cell_bgr):
 
     # Number region: y: 21..30 (9 rows), x: 0..24
     roi = cell_bgr[21:30, 0:24]
-    white_mask = ((roi[:, :, 0] > 170) & (roi[:, :, 1] > 160)).astype(int)
+    white_mask = ((roi[:, :, 0] > 165) & (roi[:, :, 1] > 155)).astype(int)
 
     # Black outline verification in 31x31 cell near bottom-left
     corner = cell_bgr[20:31, 0:22]
     black_count = ((corner[:, :, 0] < 50) & (corner[:, :, 1] < 50) & (corner[:, :, 2] < 50)).sum()
-    if black_count < 45 or white_mask.sum() < 8:
+    if black_count < 20 or white_mask.sum() < 7:
         return None
 
     matches = []
     w_roi = white_mask.shape[1]
-    for x in range(0, w_roi - 3):
+    for x in range(0, w_roi - 2):
         for d, tmpl in DIGIT_TEMPLATES.items():
             w = tmpl.shape[1]
             if x + w <= w_roi:
@@ -175,8 +195,11 @@ def parse_cell_quantity(cell_bgr):
                 unexplained = np.sum((sub == 1) & (tmpl == 0))
 
                 total_tmpl = np.sum(tmpl)
-                if matched / total_tmpl >= 0.75 and unexplained <= 4:
-                    score = matched - 1.2 * unexplained - 1.0 * missed_tmpl
+                max_unexplained = 4 if d == '1' else 14
+                min_ratio = 0.85 if (d != '1' and unexplained > 5) else 0.75
+
+                if matched / total_tmpl >= min_ratio and unexplained <= max_unexplained:
+                    score = matched - 0.8 * unexplained - 1.0 * missed_tmpl
                     matches.append((x, d, score, w))
 
     if not matches:
@@ -205,11 +228,17 @@ def parse_cell_quantity(cell_bgr):
 
 class HotbarDetector:
     def __init__(self):
-        # Decode Ctrl button template
-        raw_png = base64.b64decode(CTRL_BTN_B64)
-        np_arr = np.frombuffer(raw_png, np.uint8)
-        self.ctrl_tmpl = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        self.tmpl_h, self.tmpl_w, _ = self.ctrl_tmpl.shape # 31x31
+        # Decode bottom frame template (147x8 at 1.0x scale) - immune to item changes
+        raw_frame = base64.b64decode(FRAME_BOTTOM_B64)
+        np_frame = np.frombuffer(raw_frame, np.uint8)
+        self.frame_tmpl = cv2.imdecode(np_frame, cv2.IMREAD_COLOR)
+        self.frame_h, self.frame_w, _ = self.frame_tmpl.shape  # 8x147
+
+        # Decode Ctrl button template as secondary fallback (31x31 at 1.0x scale)
+        raw_ctrl = base64.b64decode(CTRL_BTN_B64)
+        np_ctrl = np.frombuffer(raw_ctrl, np.uint8)
+        self.ctrl_tmpl = cv2.imdecode(np_ctrl, cv2.IMREAD_COLOR)
+        self.ctrl_h, self.ctrl_w, _ = self.ctrl_tmpl.shape  # 31x31
 
         # Standard grid dimensions (at 1.0x scale)
         self.grid_w = 147
@@ -221,7 +250,7 @@ class HotbarDetector:
 
         # Lock tracking
         self.is_locked = False
-        self.locked_loc = (0, 0) # (x, y) of grid top-left relative to ROI
+        self.locked_loc = (0, 0)  # (x, y) of grid top-left relative to ROI
         self.locked_scale = 1.0
         self.consecutive_misses = 0
 
@@ -232,56 +261,77 @@ class HotbarDetector:
     def detect(self, roi_bgr, ui_scale=1.0):
         """
         Locates the 3x4 hotbar grid in roi_bgr, crops each cell, and reads quantities.
-        Returns a dictionary with detection results.
+        Uses the hotbar window frame bottom border as the primary anchor so that
+        placing/moving items on any cell never breaks hotbar detection.
         """
         if roi_bgr is None or roi_bgr.size == 0:
             return {'success': False, 'reason': 'Empty frame'}
 
         roi_h, roi_w, _ = roi_bgr.shape
 
-        # Search scales: test near ui_scale first, fallback to multiple scales
         best_val = -1
         best_loc = (0, 0)
         best_scale = ui_scale
 
+        # 1. Fast verification near cached location (if already locked)
         if self.is_locked and abs(ui_scale - self.locked_scale) < 0.05:
-            # Fast verification near cached location
             lx, ly = self.locked_loc
-            ctrl_x = lx + int(5 * self.locked_scale)
-            ctrl_y = ly + int(73 * self.locked_scale)
-            search_pad = 25
-            y1 = max(0, ctrl_y - search_pad)
-            y2 = min(roi_h, ctrl_y + int(self.tmpl_h * self.locked_scale) + search_pad)
-            x1 = max(0, ctrl_x - search_pad)
-            x2 = min(roi_w, ctrl_x + int(self.tmpl_w * self.locked_scale) + search_pad)
+            s = self.locked_scale
 
-            if y2 > y1 + 10 and x2 > x1 + 10:
+            # Frame bottom expected position: x = lx, y = ly + int(104 * s)
+            fy = ly + int(104 * s)
+            fx = lx
+            search_pad = 20
+            y1 = max(0, fy - search_pad)
+            y2 = min(roi_h, fy + int(self.frame_h * s) + search_pad)
+            x1 = max(0, fx - search_pad)
+            x2 = min(roi_w, fx + int(self.frame_w * s) + search_pad)
+
+            if y2 > y1 + 5 and x2 > x1 + 10:
                 sub_roi = roi_bgr[y1:y2, x1:x2]
-                stmpl = self.ctrl_tmpl
-                if abs(self.locked_scale - 1.0) > 0.05:
-                    sw = max(5, int(self.tmpl_w * self.locked_scale))
-                    sh = max(5, int(self.tmpl_h * self.locked_scale))
-                    stmpl = cv2.resize(self.ctrl_tmpl, (sw, sh))
+                stmpl = self.frame_tmpl
+                if abs(s - 1.0) > 0.05:
+                    sw = max(5, int(self.frame_w * s))
+                    sh = max(3, int(self.frame_h * s))
+                    stmpl = cv2.resize(self.frame_tmpl, (sw, sh))
 
                 if sub_roi.shape[0] >= stmpl.shape[0] and sub_roi.shape[1] >= stmpl.shape[1]:
                     res = cv2.matchTemplate(sub_roi, stmpl, cv2.TM_CCOEFF_NORMED)
                     min_v, max_v, min_l, max_l = cv2.minMaxLoc(res)
                     if max_v >= 0.70:
-                        ctrl_pt = (x1 + max_l[0], y1 + max_l[1])
+                        frame_x = x1 + max_l[0]
+                        frame_y = y1 + max_l[1]
                         best_val = max_v
-                        best_loc = (ctrl_pt[0] - int(5 * self.locked_scale), ctrl_pt[1] - int(73 * self.locked_scale))
-                        best_scale = self.locked_scale
+                        best_loc = (frame_x, frame_y - int(104 * s))
+                        best_scale = s
 
-        # Full scan if not found or not locked
+        # 2. Full scan across ROI using bottom frame anchor
         if best_val < 0.70:
             scales_to_test = [ui_scale] if abs(ui_scale - 1.0) > 0.05 else []
             scales_to_test.extend([1.0, 1.25, 1.5, 2.0, 0.8, 0.67])
-            # Filter unique
             scales_to_test = list(dict.fromkeys(round(s, 2) for s in scales_to_test if s > 0))
 
             for s in scales_to_test:
-                sw = max(5, int(self.tmpl_w * s))
-                sh = max(5, int(self.tmpl_h * s))
+                sw = max(5, int(self.frame_w * s))
+                sh = max(3, int(self.frame_h * s))
+                if sw > roi_w or sh > roi_h:
+                    continue
+                stmpl = cv2.resize(self.frame_tmpl, (sw, sh)) if abs(s - 1.0) > 0.02 else self.frame_tmpl
+                res = cv2.matchTemplate(roi_bgr, stmpl, cv2.TM_CCOEFF_NORMED)
+                min_v, max_v, min_l, max_l = cv2.minMaxLoc(res)
+                if max_v > best_val:
+                    best_val = max_v
+                    best_scale = s
+                    fx, fy = max_l
+                    best_loc = (fx, fy - int(104 * s))
+                    if best_val > 0.90:
+                        break
+
+        # 3. Fallback to Ctrl button template if frame bottom wasn't matched
+        if best_val < 0.65:
+            for s in [ui_scale, 1.0, 1.25]:
+                sw = max(5, int(self.ctrl_w * s))
+                sh = max(5, int(self.ctrl_h * s))
                 if sw > roi_w or sh > roi_h:
                     continue
                 stmpl = cv2.resize(self.ctrl_tmpl, (sw, sh)) if abs(s - 1.0) > 0.02 else self.ctrl_tmpl
@@ -290,9 +340,9 @@ class HotbarDetector:
                 if max_v > best_val:
                     best_val = max_v
                     best_scale = s
-                    ctrl_x, ctrl_y = max_l
-                    best_loc = (ctrl_x - int(5 * s), ctrl_y - int(73 * s))
-                    if best_val > 0.90:
+                    cx, cy = max_l
+                    best_loc = (cx - int(5 * s), cy - int(73 * s))
+                    if best_val > 0.85:
                         break
 
         if best_val < 0.65:
@@ -320,34 +370,31 @@ class HotbarDetector:
         else:
             norm_grid = grid_crop
 
-        # Extract 12 cells and read quantities
-        cells_data = []
+        # Slice cells and parse numbers
+        cells = []
         quantities = {}
+        for r_idx, (r1, r2) in enumerate(self.cell_rows):
+            row_cells = []
+            for c_idx, (c1, c2) in enumerate(self.cell_cols):
+                cell_bgr = norm_grid[r1:r2, c1:c2].copy()
+                qty = parse_cell_quantity(cell_bgr)
+                quantities[(r_idx, c_idx)] = qty
 
-        for r in range(3):
-            row_data = []
-            y1, y2 = self.cell_rows[r]
-            for c in range(4):
-                x1, x2 = self.cell_cols[c]
-                cell_crop = norm_grid[y1:y2, x1:x2].copy()
-                qty = parse_cell_quantity(cell_crop)
-                key_name = KEY_NAMES[r][c]
-                row_data.append({
-                    'row': r,
-                    'col': c,
-                    'key': key_name,
+                row_cells.append({
+                    'row': r_idx,
+                    'col': c_idx,
+                    'key': KEY_NAMES[r_idx][c_idx],
                     'quantity': qty,
-                    'crop_bgr': cell_crop
+                    'crop_bgr': cell_bgr
                 })
-                quantities[(r, c)] = qty
-            cells_data.append(row_data)
+            cells.append(row_cells)
 
         return {
             'success': True,
-            'grid_crop_bgr': norm_grid,
-            'cells': cells_data,
-            'quantities': quantities,
+            'grid_loc': best_loc,
             'scale': best_scale,
-            'pos': best_loc,
-            'conf': best_val
+            'confidence': best_val,
+            'grid_crop_bgr': grid_crop,
+            'cells': cells,
+            'quantities': quantities
         }

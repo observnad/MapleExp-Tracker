@@ -14,6 +14,7 @@ def build():
         "--add-data", "icon.ico;.",
         "--collect-all", "customtkinter",
         "--collect-all", "PIL",
+        "--collect-all", "windows_capture",
         "src/app.py"
     ]
     

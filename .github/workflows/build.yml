@@ -1,19 +1,22 @@
-name: Build Standalone Executable
+name: Build & Release MapleEXP Tracker
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
     tags: [ "v*" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  build-and-release:
+    name: Build Windows Executable
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
@@ -21,12 +24,12 @@ jobs:
         python-version: "3.12"
         cache: "pip"
 
-    - name: Install dependencies
+    - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Build Executable
+    - name: Compile Executable
       run: |
         python build_exe.py
 
@@ -36,10 +39,28 @@ jobs:
         name: MapleEXPTracker-Windows
         path: dist/MapleEXPTracker.exe
 
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/')
+    - name: Publish to GitHub Releases
       uses: softprops/action-gh-release@v2
       with:
+        tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0' }}
+        name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'MapleEXP Tracker v1.0.0' }}
+        body: |
+          ## 🍁 MapleEXP Tracker
+
+          Download **`MapleEXPTracker.exe`** below to start tracking your EXP!
+
+          ### 🚀 Quick Start
+          1. Download `MapleEXPTracker.exe` from the **Assets** section below.
+          2. Double-click to run (no installation or Python required).
+          3. Launch MapleStory — the tracker will automatically detect and lock onto your EXP bar.
+
+          ### ✨ Key Features
+          - **Multi-Window & Multi-Scale**: Automatically adapts to any window resolution and UI scaling.
+          - **Occlusion-Proof**: Windows Graphics Capture (WGC) tracks EXP even with other windows (Discord, web browser) in front.
+          - **Rolling Windows**: Tracks EXP received and projected hourly rates for **1m, 5m, 10m, 30m, and 1h**.
+          - **Always-on-Top & Live Preview**: Pinned overlay with real-time recognition verification.
         files: dist/MapleEXPTracker.exe
+        prerelease: false
+        generate_release_notes: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

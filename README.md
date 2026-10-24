@@ -1,5 +1,12 @@
 # 🍁 MapleEXP Tracker
 
+[![Download MapleEXPTracker.exe](https://img.shields.io/badge/Download-MapleEXPTracker.exe-brightgreen?style=for-the-badge&logo=windows)](https://github.com/observnad/MapleExp-Tracker/releases/latest/download/MapleEXPTracker.exe)
+[![GitHub Release](https://img.shields.io/github/v/release/observnad/MapleExp-Tracker?style=for-the-badge&color=blue)](https://github.com/observnad/MapleExp-Tracker/releases/latest)
+
+> 📥 **Direct Download for Friends**: Click **[MapleEXPTracker.exe](https://github.com/observnad/MapleExp-Tracker/releases/latest/download/MapleEXPTracker.exe)** to download the standalone executable. No Python or installation needed—just double-click to run!
+
+---
+
 A lightweight, high-performance, standalone desktop tracker for MapleStory that continuously monitors your experience points (EXP) and calculates rolling gains and rates across **1m, 5m, 10m, 30m, and 1h** intervals.
 
 ---

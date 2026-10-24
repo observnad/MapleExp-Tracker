@@ -16,6 +16,11 @@ A lightweight, high-performance, standalone desktop tracker for MapleStory that 
 - **Multi-Window & Multi-Scale Support**:
   - Automatically detects the game window and dynamic UI scaling factor without hardcoded coordinates.
   - Adapts instantly when the window is resized, moved, or when UI scaling changes.
+- **🎒 Hotbar Item Monitor & Low Quantity Red Alert**:
+  - Live 3x4 simulated hotbar grid showing real-time screencaps of your MapleStory quickslots (`1..4`, `Shift..Pup`, `Ctrl..Pdn`).
+  - Interactive cell selector: click any slot to monitor its item quantity.
+  - Configurable minimum threshold with quick presets (`10`, `20`, `50`, `100`) and stepper controls.
+  - **🚨 Full-App Red Alert Warning**: When the monitored item's count drops below the set threshold, the entire application turns a bold shade of warning red with an alert banner so you never run out of potions during grinds.
 - **Rolling Time Windows**:
   - **1 Minute**: Rapid feedback on current grinding spot efficiency.
   - **5 Minutes**: Short-term burst rate.

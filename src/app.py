@@ -5,6 +5,7 @@ import cv2
 
 from src.capture import WindowCapture
 from src.detector import ExpDetector
+from src.hotbar import HotbarDetector
 from src.tracker import ExpTracker
 from src.ui import TrackerUI
 
@@ -30,10 +31,18 @@ class AppController:
         self.capture = WindowCapture()
         self.detector = ExpDetector()
         self.tracker = ExpTracker()
+        self.hotbar_detector = HotbarDetector()
 
         self._lock = threading.Lock()
         self._is_running = True
         self._is_paused = False
+
+        # Hotbar alert configuration
+        # Default to row 2, col 3 (Pdn key with orange 49)
+        self.monitored_cell = (2, 3)
+        self.min_threshold = 20
+        self.alert_enabled = True
+        self.previous_quantities = {}
 
         self.latest_state = {
             'status': 'SEARCHING',
@@ -49,12 +58,54 @@ class AppController:
             'session_pct_rate_hr': 0.0,
             'eta_seconds': None,
             'level_ups': 0,
-            'crop_bgr': None
+            'crop_bgr': None,
+            'hotbar': {
+                'found': False,
+                'grid_crop_bgr': None,
+                'cells': None,
+                'quantities': {},
+                'monitored_cell': (2, 3),
+                'monitored_qty': None,
+                'min_threshold': 20,
+                'alert_enabled': True,
+                'alert_triggered': False
+            }
         }
 
         # Background worker thread
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
+
+    def set_monitored_cell(self, row: int, col: int):
+        with self._lock:
+            self.monitored_cell = (row, col)
+            self._update_alert_status()
+
+    def set_min_threshold(self, threshold: int):
+        with self._lock:
+            self.min_threshold = max(0, int(threshold))
+            self._update_alert_status()
+
+    def set_alert_enabled(self, enabled: bool):
+        with self._lock:
+            self.alert_enabled = bool(enabled)
+            self._update_alert_status()
+
+    def _update_alert_status(self):
+        hotbar = self.latest_state.get('hotbar', {})
+        quantities = hotbar.get('quantities', {})
+        qty = quantities.get(self.monitored_cell)
+        is_low = False
+        if self.alert_enabled and self.monitored_cell in quantities:
+            if qty is not None and qty < self.min_threshold:
+                is_low = True
+            elif qty is None and self.previous_quantities.get(self.monitored_cell) is not None:
+                is_low = True
+        hotbar['monitored_cell'] = self.monitored_cell
+        hotbar['monitored_qty'] = qty
+        hotbar['min_threshold'] = self.min_threshold
+        hotbar['alert_enabled'] = self.alert_enabled
+        hotbar['alert_triggered'] = is_low
 
     def toggle_pause(self):
         with self._lock:
@@ -102,6 +153,10 @@ class AppController:
             # Detect EXP bar and text
             res = self.detector.detect(roi_bgr, client_w, client_h)
 
+            # Detect Hotbar (3x4 grid)
+            ui_scale = res.get('scale', 1.0) if res.get('success') else 1.0
+            hotbar_res = self.hotbar_detector.detect(roi_bgr, ui_scale=ui_scale)
+
             if res.get('success'):
                 exp_val = res['exp_value']
                 exp_pct = res['exp_pct']
@@ -141,6 +196,36 @@ class AppController:
                     if self.latest_state['status'] != 'LOCKED':
                         self.latest_state['status'] = 'SEARCHING'
                         self.latest_state['details'] = res.get('reason', 'Locating EXP bar...')
+
+            # Update hotbar detection and alert state
+            with self._lock:
+                if hotbar_res.get('success'):
+                    quantities = hotbar_res['quantities']
+                    for k, v in quantities.items():
+                        if v is not None:
+                            self.previous_quantities[k] = v
+
+                    qty = quantities.get(self.monitored_cell)
+                    is_low = False
+                    if self.alert_enabled and self.monitored_cell in quantities:
+                        if qty is not None and qty < self.min_threshold:
+                            is_low = True
+                        elif qty is None and self.previous_quantities.get(self.monitored_cell) is not None:
+                            is_low = True
+
+                    self.latest_state['hotbar'] = {
+                        'found': True,
+                        'grid_crop_bgr': hotbar_res['grid_crop_bgr'],
+                        'cells': hotbar_res['cells'],
+                        'quantities': quantities,
+                        'monitored_cell': self.monitored_cell,
+                        'monitored_qty': qty,
+                        'min_threshold': self.min_threshold,
+                        'alert_enabled': self.alert_enabled,
+                        'alert_triggered': is_low
+                    }
+                else:
+                    self.latest_state['hotbar']['found'] = False
 
             # 1 Hz sampling rate (sleep remaining time of the 1-second interval)
             elapsed = time.time() - start_t

@@ -3,7 +3,14 @@ import sys
 import tkinter as tk
 import customtkinter as ctk
 from PIL import Image, ImageTk
+import cv2
 import time
+
+KEY_NAMES = [
+    ["1", "2", "3", "4"],
+    ["Shift", "Ins", "Hm", "Pup"],
+    ["Ctrl", "Del", "End", "Pdn"]
+]
 
 
 class TrackerUI(ctk.CTk):
@@ -12,9 +19,9 @@ class TrackerUI(ctk.CTk):
         self.controller = app_controller
 
         # Window settings
-        self.title("MapleEXP Tracker")
-        self.geometry("460x650")
-        self.minsize(420, 520)
+        self.title("MapleEXP Tracker & Hotbar Alert")
+        self.geometry("490x840")
+        self.minsize(450, 600)
 
         # Set window icon if available
         base_dir = getattr(sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__) + '/..'))
@@ -24,40 +31,65 @@ class TrackerUI(ctk.CTk):
                 self.iconbitmap(icon_path)
             except Exception:
                 pass
-        
+
         # Configure theme
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("dark-blue")
+
+        # Theme Colors
+        self.COLOR_BG_NORMAL = "#141517"
+        self.COLOR_BG_ALERT = "#381212"
+        self.COLOR_CARD_NORMAL = "#1e1f22"
+        self.COLOR_CARD_ALERT = "#4d1919"
+        self.COLOR_STATUS_NORMAL = "#2b2d31"
+        self.COLOR_STATUS_ALERT = "#661d1d"
+
+        self.is_currently_red_alert = False
 
         # Always on top
         self.always_on_top = True
         self.attributes("-topmost", True)
 
+        # UI state for hotbar
+        self.selected_cell = (2, 3)  # default: Pdn (orange 49)
+        self.grid_buttons = {}
+        self.cell_cached_images = {}
+        self.all_card_frames = []
+
         # Build UI layout
         self._build_header()
-        self._build_current_exp_card()
-        self._build_rolling_windows_card()
-        self._build_session_card()
-        self._build_preview_card()
+        self._build_alert_banner()
+
+        # Scrollable content frame so it never overflows regardless of resolution
+        self.content_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.content_frame.pack(fill="both", expand=True, padx=10, pady=(2, 4))
+
+        self._build_hotbar_card(self.content_frame)
+        self._build_current_exp_card(self.content_frame)
+        self._build_rolling_windows_card(self.content_frame)
+        self._build_session_card(self.content_frame)
+        self._build_preview_card(self.content_frame)
+
+        # Bottom fixed controls
         self._build_controls()
 
         # Update loop interval (100ms for smooth UI updates)
         self.after(100, self._on_ui_tick)
 
     def _build_header(self):
-        header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        header_frame.pack(fill="x", padx=16, pady=(12, 6))
+        self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.header_frame.pack(fill="x", padx=16, pady=(10, 4))
 
         # Title & Version
         title_label = ctk.CTkLabel(
-            header_frame,
+            self.header_frame,
             text="🍁 MapleEXP Tracker",
-            font=ctk.CTkFont(size=18, weight="bold")
+            font=ctk.CTkFont(size=17, weight="bold")
         )
         title_label.pack(side="left")
 
-        # Topmost & Opacity Controls
-        controls_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        # Topmost Controls
+        controls_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent")
         controls_frame.pack(side="right")
 
         self.pin_btn = ctk.CTkButton(
@@ -72,8 +104,8 @@ class TrackerUI(ctk.CTk):
         self.pin_btn.pack(side="left", padx=4)
 
         # Status badge
-        self.status_frame = ctk.CTkFrame(self, fg_color="#2b2d31", corner_radius=6, height=26)
-        self.status_frame.pack(fill="x", padx=16, pady=4)
+        self.status_frame = ctk.CTkFrame(self, fg_color=self.COLOR_STATUS_NORMAL, corner_radius=6, height=26)
+        self.status_frame.pack(fill="x", padx=16, pady=3)
 
         self.status_label = ctk.CTkLabel(
             self.status_frame,
@@ -83,9 +115,182 @@ class TrackerUI(ctk.CTk):
         )
         self.status_label.pack(pady=3, padx=10)
 
-    def _build_current_exp_card(self):
-        card = ctk.CTkFrame(self, fg_color="#1e1f22", corner_radius=10)
-        card.pack(fill="x", padx=16, pady=6)
+    def _build_alert_banner(self):
+        """Top prominent alert banner displayed when item quantity drops below threshold."""
+        self.alert_banner = ctk.CTkFrame(self, fg_color="#8b1c1c", corner_radius=6)
+        self.alert_banner_label = ctk.CTkLabel(
+            self.alert_banner,
+            text="🚨 LOW ITEM WARNING: Quantity dropped below threshold!",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#ffffff"
+        )
+        self.alert_banner_label.pack(pady=4, padx=10)
+        # Not packed initially; shown dynamically when alert triggers
+
+    def _build_hotbar_card(self, parent):
+        card = ctk.CTkFrame(parent, fg_color=self.COLOR_CARD_NORMAL, corner_radius=10)
+        card.pack(fill="x", padx=4, pady=4)
+        self.hotbar_card = card
+        self.all_card_frames.append(card)
+
+        # Header row
+        hdr_row = ctk.CTkFrame(card, fg_color="transparent")
+        hdr_row.pack(fill="x", padx=14, pady=(8, 4))
+
+        ctk.CTkLabel(
+            hdr_row,
+            text="🎒 HOTBAR ITEM ALERT (3x4 GRID)",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#8a8d95"
+        ).pack(side="left")
+
+        self.hotbar_status_pill = ctk.CTkLabel(
+            hdr_row,
+            text="● HOTBAR DETECTED",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#43b581"
+        )
+        self.hotbar_status_pill.pack(side="right")
+
+        body_frame = ctk.CTkFrame(card, fg_color="transparent")
+        body_frame.pack(fill="x", padx=12, pady=(0, 10))
+
+        # Simulated 3x4 Grid on Left
+        self.grid_container = ctk.CTkFrame(body_frame, fg_color="#18191c", corner_radius=8)
+        self.grid_container.pack(side="left", padx=(0, 12), pady=2)
+
+        for r in range(3):
+            for c in range(4):
+                key_text = KEY_NAMES[r][c]
+                is_selected = (r == self.selected_cell[0] and c == self.selected_cell[1])
+
+                btn = ctk.CTkButton(
+                    self.grid_container,
+                    text=key_text,
+                    font=ctk.CTkFont(size=10, weight="bold"),
+                    width=42,
+                    height=42,
+                    corner_radius=4,
+                    border_width=2 if is_selected else 1,
+                    border_color="#f1c40f" if is_selected else "#383a40",
+                    fg_color="#2b2d31",
+                    hover_color="#3b3e45",
+                    command=lambda row=r, col=c: self._on_cell_clicked(row, col)
+                )
+                btn.grid(row=r, column=c, padx=3, pady=3)
+                self.grid_buttons[(r, c)] = btn
+
+        # Alert Configuration Panel on Right
+        ctrl_frame = ctk.CTkFrame(body_frame, fg_color="transparent")
+        ctrl_frame.pack(side="left", fill="both", expand=True)
+
+        self.lbl_selected_target = ctk.CTkLabel(
+            ctrl_frame,
+            text="🎯 Key: Pdn [Row 2, Col 3]",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            anchor="w"
+        )
+        self.lbl_selected_target.pack(anchor="w", pady=(0, 1))
+
+        # Current quantity row
+        qty_row = ctk.CTkFrame(ctrl_frame, fg_color="transparent")
+        qty_row.pack(fill="x", pady=1)
+
+        ctk.CTkLabel(
+            qty_row,
+            text="Current Qty: ",
+            font=ctk.CTkFont(size=11),
+            text_color="#8a8d95"
+        ).pack(side="left")
+
+        self.lbl_current_qty = ctk.CTkLabel(
+            qty_row,
+            text="--",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#f2c94c"
+        )
+        self.lbl_current_qty.pack(side="left")
+
+        # Threshold configuration label
+        ctk.CTkLabel(
+            ctrl_frame,
+            text="Alert when drops below:",
+            font=ctk.CTkFont(size=10),
+            text_color="#8a8d95"
+        ).pack(anchor="w", pady=(3, 1))
+
+        # Threshold input stepper
+        thresh_row = ctk.CTkFrame(ctrl_frame, fg_color="transparent")
+        thresh_row.pack(fill="x", pady=2)
+
+        self.btn_dec = ctk.CTkButton(
+            thresh_row,
+            text="-",
+            width=26,
+            height=26,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#34495e",
+            hover_color="#2c3e50",
+            command=lambda: self._adjust_threshold(-5)
+        )
+        self.btn_dec.pack(side="left", padx=(0, 3))
+
+        self.entry_threshold = ctk.CTkEntry(
+            thresh_row,
+            width=50,
+            height=26,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            justify="center"
+        )
+        self.entry_threshold.pack(side="left", padx=2)
+        self.entry_threshold.insert(0, "20")
+        self.entry_threshold.bind("<Return>", self._on_threshold_entry_changed)
+        self.entry_threshold.bind("<FocusOut>", self._on_threshold_entry_changed)
+
+        self.btn_inc = ctk.CTkButton(
+            thresh_row,
+            text="+",
+            width=26,
+            height=26,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#34495e",
+            hover_color="#2c3e50",
+            command=lambda: self._adjust_threshold(+5)
+        )
+        self.btn_inc.pack(side="left", padx=3)
+
+        # Preset threshold quick buttons
+        preset_row = ctk.CTkFrame(ctrl_frame, fg_color="transparent")
+        preset_row.pack(fill="x", pady=2)
+        for p in [10, 20, 50, 100]:
+            btn_p = ctk.CTkButton(
+                preset_row,
+                text=str(p),
+                width=32,
+                height=20,
+                font=ctk.CTkFont(size=10),
+                fg_color="#2b2d31",
+                hover_color="#3b3e45",
+                command=lambda val=p: self._set_preset_threshold(val)
+            )
+            btn_p.pack(side="left", padx=1)
+
+        # Toggle Switch
+        self.switch_alert = ctk.CTkSwitch(
+            ctrl_frame,
+            text="Red Alert Active",
+            font=ctk.CTkFont(size=11),
+            height=20,
+            command=self._on_alert_toggle
+        )
+        self.switch_alert.pack(anchor="w", pady=(4, 0))
+        self.switch_alert.select()
+
+    def _build_current_exp_card(self, parent):
+        card = ctk.CTkFrame(parent, fg_color=self.COLOR_CARD_NORMAL, corner_radius=10)
+        card.pack(fill="x", padx=4, pady=4)
+        self.exp_card = card
+        self.all_card_frames.append(card)
 
         # Subtitle
         ctk.CTkLabel(
@@ -93,16 +298,16 @@ class TrackerUI(ctk.CTk):
             text="CURRENT EXPERIENCE",
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="#8a8d95"
-        ).pack(anchor="w", padx=14, pady=(10, 0))
+        ).pack(anchor="w", padx=14, pady=(8, 0))
 
         # Big EXP numbers row
         exp_row = ctk.CTkFrame(card, fg_color="transparent")
-        exp_row.pack(fill="x", padx=14, pady=(2, 4))
+        exp_row.pack(fill="x", padx=14, pady=(2, 2))
 
         self.exp_val_label = ctk.CTkLabel(
             exp_row,
             text="0 EXP",
-            font=ctk.CTkFont(size=24, weight="bold"),
+            font=ctk.CTkFont(size=22, weight="bold"),
             text_color="#ffffff"
         )
         self.exp_val_label.pack(side="left")
@@ -110,7 +315,7 @@ class TrackerUI(ctk.CTk):
         self.exp_pct_label = ctk.CTkLabel(
             exp_row,
             text="[ 0.00% ]",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
             text_color="#a8e61d"  # Maple lime-green
         )
         self.exp_pct_label.pack(side="left", padx=10)
@@ -118,22 +323,22 @@ class TrackerUI(ctk.CTk):
         # Progress bar
         self.exp_progress = ctk.CTkProgressBar(
             card,
-            height=14,
+            height=12,
             corner_radius=4,
             progress_color="#c8e616",  # Maple yellow-lime
             fg_color="#383a40"
         )
-        self.exp_progress.pack(fill="x", padx=14, pady=6)
+        self.exp_progress.pack(fill="x", padx=14, pady=4)
         self.exp_progress.set(0.0)
 
         # Sub-stats (ETA & Level-ups)
         info_row = ctk.CTkFrame(card, fg_color="transparent")
-        info_row.pack(fill="x", padx=14, pady=(0, 10))
+        info_row.pack(fill="x", padx=14, pady=(0, 8))
 
         self.eta_label = ctk.CTkLabel(
             info_row,
             text="⏳ Level Up ETA: --",
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=11),
             text_color="#dbdee1"
         )
         self.eta_label.pack(side="left")
@@ -146,27 +351,28 @@ class TrackerUI(ctk.CTk):
         )
         self.lvlup_label.pack(side="right")
 
-    def _build_rolling_windows_card(self):
-        card = ctk.CTkFrame(self, fg_color="#1e1f22", corner_radius=10)
-        card.pack(fill="x", padx=16, pady=6)
+    def _build_rolling_windows_card(self, parent):
+        card = ctk.CTkFrame(parent, fg_color=self.COLOR_CARD_NORMAL, corner_radius=10)
+        card.pack(fill="x", padx=4, pady=4)
+        self.windows_card = card
+        self.all_card_frames.append(card)
 
         ctk.CTkLabel(
             card,
             text="ROLLING EXPERIENCE GAINED",
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="#8a8d95"
-        ).pack(anchor="w", padx=14, pady=(10, 6))
+        ).pack(anchor="w", padx=14, pady=(8, 4))
 
         # Table Grid Headers
         header_grid = ctk.CTkFrame(card, fg_color="#2b2d31", corner_radius=4)
         header_grid.pack(fill="x", padx=12, pady=(0, 4))
 
-        ctk.CTkLabel(header_grid, text="Window", font=ctk.CTkFont(size=11, weight="bold"), width=70, anchor="w").grid(row=0, column=0, padx=8, pady=4)
-        ctk.CTkLabel(header_grid, text="EXP Gained", font=ctk.CTkFont(size=11, weight="bold"), width=110, anchor="e").grid(row=0, column=1, padx=6, pady=4)
-        ctk.CTkLabel(header_grid, text="% Gained", font=ctk.CTkFont(size=11, weight="bold"), width=80, anchor="e").grid(row=0, column=2, padx=6, pady=4)
-        ctk.CTkLabel(header_grid, text="Rate / Hour", font=ctk.CTkFont(size=11, weight="bold"), width=110, anchor="e").grid(row=0, column=3, padx=8, pady=4)
+        ctk.CTkLabel(header_grid, text="Window", font=ctk.CTkFont(size=11, weight="bold"), width=60, anchor="w").grid(row=0, column=0, padx=6, pady=3)
+        ctk.CTkLabel(header_grid, text="EXP Gained", font=ctk.CTkFont(size=11, weight="bold"), width=100, anchor="e").grid(row=0, column=1, padx=4, pady=3)
+        ctk.CTkLabel(header_grid, text="% Gained", font=ctk.CTkFont(size=11, weight="bold"), width=75, anchor="e").grid(row=0, column=2, padx=4, pady=3)
+        ctk.CTkLabel(header_grid, text="Rate / Hour", font=ctk.CTkFont(size=11, weight="bold"), width=100, anchor="e").grid(row=0, column=3, padx=6, pady=3)
 
-        # Windows definitions
         self.window_keys = [
             ("1m", 60, "Past 1 min"),
             ("5m", 300, "Past 5 min"),
@@ -180,17 +386,17 @@ class TrackerUI(ctk.CTk):
             row_frame = ctk.CTkFrame(card, fg_color="transparent" if idx % 2 == 0 else "#232428", corner_radius=3)
             row_frame.pack(fill="x", padx=12, pady=1)
 
-            lbl_name = ctk.CTkLabel(row_frame, text=key, font=ctk.CTkFont(size=12, weight="bold"), width=70, anchor="w", text_color="#58a6ff")
-            lbl_name.grid(row=0, column=0, padx=8, pady=3)
+            lbl_name = ctk.CTkLabel(row_frame, text=key, font=ctk.CTkFont(size=11, weight="bold"), width=60, anchor="w", text_color="#58a6ff")
+            lbl_name.grid(row=0, column=0, padx=6, pady=2)
 
-            lbl_exp = ctk.CTkLabel(row_frame, text="+0", font=ctk.CTkFont(size=12), width=110, anchor="e", text_color="#ffffff")
-            lbl_exp.grid(row=0, column=1, padx=6, pady=3)
+            lbl_exp = ctk.CTkLabel(row_frame, text="+0", font=ctk.CTkFont(size=11), width=100, anchor="e", text_color="#ffffff")
+            lbl_exp.grid(row=0, column=1, padx=4, pady=2)
 
-            lbl_pct = ctk.CTkLabel(row_frame, text="+0.00%", font=ctk.CTkFont(size=12), width=80, anchor="e", text_color="#a8e61d")
-            lbl_pct.grid(row=0, column=2, padx=6, pady=3)
+            lbl_pct = ctk.CTkLabel(row_frame, text="+0.00%", font=ctk.CTkFont(size=11), width=75, anchor="e", text_color="#a8e61d")
+            lbl_pct.grid(row=0, column=2, padx=4, pady=2)
 
-            lbl_rate = ctk.CTkLabel(row_frame, text="0 /hr", font=ctk.CTkFont(size=12), width=110, anchor="e", text_color="#e0e0e0")
-            lbl_rate.grid(row=0, column=3, padx=8, pady=3)
+            lbl_rate = ctk.CTkLabel(row_frame, text="0 /hr", font=ctk.CTkFont(size=11), width=100, anchor="e", text_color="#e0e0e0")
+            lbl_rate.grid(row=0, column=3, padx=6, pady=2)
 
             self.window_labels[key] = {
                 'exp': lbl_exp,
@@ -199,67 +405,66 @@ class TrackerUI(ctk.CTk):
                 'seconds': sec
             }
 
-        # Extra padding bottom
-        ctk.CTkFrame(card, fg_color="transparent", height=6).pack()
+        ctk.CTkFrame(card, fg_color="transparent", height=4).pack()
 
-    def _build_session_card(self):
-        card = ctk.CTkFrame(self, fg_color="#1e1f22", corner_radius=10)
-        card.pack(fill="x", padx=16, pady=6)
+    def _build_session_card(self, parent):
+        card = ctk.CTkFrame(parent, fg_color=self.COLOR_CARD_NORMAL, corner_radius=10)
+        card.pack(fill="x", padx=4, pady=4)
+        self.session_card = card
+        self.all_card_frames.append(card)
 
         ctk.CTkLabel(
             card,
             text="SESSION OVERVIEW",
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="#8a8d95"
-        ).pack(anchor="w", padx=14, pady=(8, 4))
+        ).pack(anchor="w", padx=14, pady=(6, 2))
 
         stats_grid = ctk.CTkFrame(card, fg_color="transparent")
-        stats_grid.pack(fill="x", padx=14, pady=(0, 8))
+        stats_grid.pack(fill="x", padx=14, pady=(0, 6))
 
-        # Col 1: Duration & Total Gain
         self.session_time_label = ctk.CTkLabel(
             stats_grid,
             text="⏱ Duration: 00:00:00",
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=11),
             anchor="w"
         )
-        self.session_time_label.grid(row=0, column=0, sticky="w", pady=2)
+        self.session_time_label.grid(row=0, column=0, sticky="w", pady=1)
 
         self.session_gain_label = ctk.CTkLabel(
             stats_grid,
             text="🌟 Total Gain: +0 (+0.00%)",
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=11),
             anchor="w",
             text_color="#ffffff"
         )
-        self.session_gain_label.grid(row=1, column=0, sticky="w", pady=2)
+        self.session_gain_label.grid(row=1, column=0, sticky="w", pady=1)
 
-        # Col 2: Average Rate
         self.session_rate_label = ctk.CTkLabel(
             stats_grid,
             text="⚡ Avg Rate: 0 EXP/hr",
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=11, weight="bold"),
             anchor="e",
             text_color="#f2c94c"
         )
-        self.session_rate_label.grid(row=0, column=1, sticky="e", padx=(40, 0), pady=2)
+        self.session_rate_label.grid(row=0, column=1, sticky="e", padx=(30, 0), pady=1)
 
         self.session_pct_rate_label = ctk.CTkLabel(
             stats_grid,
             text="(+0.00% / hr)",
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=10),
             anchor="e",
             text_color="#a8e61d"
         )
-        self.session_pct_rate_label.grid(row=1, column=1, sticky="e", padx=(40, 0), pady=2)
+        self.session_pct_rate_label.grid(row=1, column=1, sticky="e", padx=(30, 0), pady=1)
 
-    def _build_preview_card(self):
-        """Collapsible preview showing what the tracker sees."""
-        self.preview_frame = ctk.CTkFrame(self, fg_color="#1e1f22", corner_radius=10)
-        
+    def _build_preview_card(self, parent):
+        self.preview_frame = ctk.CTkFrame(parent, fg_color=self.COLOR_CARD_NORMAL, corner_radius=10)
+        self.all_card_frames.append(self.preview_frame)
+
         top_row = ctk.CTkFrame(self.preview_frame, fg_color="transparent")
-        top_row.pack(fill="x", padx=14, pady=(8, 4))
-        
+        top_row.pack(fill="x", padx=14, pady=(6, 2))
+
         ctk.CTkLabel(
             top_row,
             text="DETECTION PREVIEW (LIVE)",
@@ -268,13 +473,13 @@ class TrackerUI(ctk.CTk):
         ).pack(side="left")
 
         self.preview_img_label = ctk.CTkLabel(self.preview_frame, text="No preview available")
-        self.preview_img_label.pack(padx=14, pady=(2, 8))
+        self.preview_img_label.pack(padx=14, pady=(2, 6))
 
         self.preview_shown = False
 
     def _build_controls(self):
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=16, pady=(8, 12))
+        btn_frame.pack(fill="x", padx=16, pady=(4, 10))
 
         self.reset_btn = ctk.CTkButton(
             btn_frame,
@@ -282,7 +487,7 @@ class TrackerUI(ctk.CTk):
             font=ctk.CTkFont(size=12, weight="bold"),
             fg_color="#c0392b",
             hover_color="#962d22",
-            height=32,
+            height=30,
             command=self._on_reset_clicked
         )
         self.reset_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
@@ -293,7 +498,7 @@ class TrackerUI(ctk.CTk):
             font=ctk.CTkFont(size=12, weight="bold"),
             fg_color="#34495e",
             hover_color="#2c3e50",
-            height=32,
+            height=30,
             command=self._toggle_pause
         )
         self.pause_btn.pack(side="left", expand=True, fill="x", padx=4)
@@ -304,11 +509,91 @@ class TrackerUI(ctk.CTk):
             font=ctk.CTkFont(size=12),
             fg_color="#2b2d31",
             hover_color="#3b3e45",
-            height=32,
+            height=30,
             width=80,
             command=self._toggle_preview
         )
         self.preview_toggle_btn.pack(side="left", padx=(4, 0))
+
+    def _set_theme_color(self, is_alert):
+        """Switches the app background and cards between normal dark and warning red."""
+        if is_alert == self.is_currently_red_alert:
+            return
+        self.is_currently_red_alert = is_alert
+
+        bg = self.COLOR_BG_ALERT if is_alert else self.COLOR_BG_NORMAL
+        card_bg = self.COLOR_CARD_ALERT if is_alert else self.COLOR_CARD_NORMAL
+        status_bg = self.COLOR_STATUS_ALERT if is_alert else self.COLOR_STATUS_NORMAL
+
+        self.configure(fg_color=bg)
+        self.status_frame.configure(fg_color=status_bg)
+
+        for card in self.all_card_frames:
+            try:
+                card.configure(fg_color=card_bg)
+            except Exception:
+                pass
+
+        if is_alert:
+            # Show alert banner under status frame
+            self.alert_banner.pack(fill="x", padx=16, pady=(0, 4), after=self.status_frame)
+            self.hotbar_status_pill.configure(
+                text="⚠️ LOW QUANTITY ALERT!",
+                text_color="#ff7675"
+            )
+        else:
+            self.alert_banner.pack_forget()
+            self.hotbar_status_pill.configure(
+                text="● HOTBAR DETECTED",
+                text_color="#43b581"
+            )
+
+    def _on_cell_clicked(self, row, col):
+        """Handles selecting one of the 3x4 grid cells."""
+        self.selected_cell = (row, col)
+        self.controller.set_monitored_cell(row, col)
+
+        # Update button borders
+        for (r, c), btn in self.grid_buttons.items():
+            if (r, c) == self.selected_cell:
+                btn.configure(border_width=2, border_color="#f1c40f")
+            else:
+                btn.configure(border_width=1, border_color="#383a40")
+
+        key_name = KEY_NAMES[row][col]
+        self.lbl_selected_target.configure(text=f"🎯 Key: {key_name} [Row {row}, Col {col}]")
+
+        # Update current quantity label
+        data = self.controller.get_latest_state()
+        quantities = data.get('hotbar', {}).get('quantities', {})
+        qty = quantities.get((row, col))
+        self.lbl_current_qty.configure(text=str(qty) if qty is not None else "--")
+
+    def _adjust_threshold(self, delta):
+        try:
+            curr = int(self.entry_threshold.get().strip())
+        except ValueError:
+            curr = 20
+        new_val = max(0, curr + delta)
+        self.entry_threshold.delete(0, "end")
+        self.entry_threshold.insert(0, str(new_val))
+        self.controller.set_min_threshold(new_val)
+
+    def _set_preset_threshold(self, val):
+        self.entry_threshold.delete(0, "end")
+        self.entry_threshold.insert(0, str(val))
+        self.controller.set_min_threshold(val)
+
+    def _on_threshold_entry_changed(self, event=None):
+        try:
+            val = int(self.entry_threshold.get().strip())
+            self.controller.set_min_threshold(val)
+        except ValueError:
+            pass
+
+    def _on_alert_toggle(self):
+        enabled = (self.switch_alert.get() == 1)
+        self.controller.set_alert_enabled(enabled)
 
     def _toggle_always_on_top(self):
         self.always_on_top = not self.always_on_top
@@ -328,13 +613,11 @@ class TrackerUI(ctk.CTk):
     def _toggle_preview(self):
         self.preview_shown = not self.preview_shown
         if self.preview_shown:
-            self.preview_frame.pack(fill="x", padx=16, pady=4, after=self.status_frame)
+            self.preview_frame.pack(fill="x", padx=4, pady=4)
             self.preview_toggle_btn.configure(fg_color="#1f538d")
-            self.geometry("460x730")
         else:
             self.preview_frame.pack_forget()
             self.preview_toggle_btn.configure(fg_color="#2b2d31")
-            self.geometry("460x650")
 
     def _on_reset_clicked(self):
         self.controller.reset_tracker()
@@ -359,16 +642,34 @@ class TrackerUI(ctk.CTk):
         return f"{h:02d}:{m:02d}:{s:02d}"
 
     def _on_ui_tick(self):
-        """Pulls latest state from controller and updates UI labels."""
+        """Pulls latest state from controller and updates UI widgets."""
         data = self.controller.get_latest_state()
 
         # Update status badge
         status = data.get('status', 'NOT_FOUND')
         details = data.get('details', '')
-        if status == 'LOCKED':
+        hotbar_data = data.get('hotbar', {})
+        is_alert = hotbar_data.get('alert_triggered', False)
+
+        # Apply red theme if alert is triggered
+        self._set_theme_color(is_alert)
+
+        if is_alert:
+            sel_r, sel_c = self.selected_cell
+            sel_key = KEY_NAMES[sel_r][sel_c]
+            curr_q = hotbar_data.get('monitored_qty', '--')
+            thresh = hotbar_data.get('min_threshold', 20)
+            self.alert_banner_label.configure(
+                text=f"🚨 ALERT: {sel_key} [Row {sel_r}, Col {sel_c}] has {curr_q} items (drops below {thresh})!"
+            )
+            self.status_label.configure(
+                text=f"🚨 ALERT: Item {sel_key} quantity is low ({curr_q} < {thresh})!",
+                text_color="#ff7675"
+            )
+        elif status == 'LOCKED':
             self.status_label.configure(
                 text=f"● Locked: MapleStory ({details})",
-                text_color="#43b581"  # Discord/Maple green
+                text_color="#43b581"
             )
         elif status == 'PAUSED':
             self.status_label.configure(
@@ -386,7 +687,7 @@ class TrackerUI(ctk.CTk):
                 text_color="#e5a93c"
             )
 
-        # Update current exp and percentage
+        # Update EXP statistics
         current_exp = data.get('current_exp', 0)
         current_pct = data.get('current_pct', 0.0)
         bar_pct = data.get('bar_pct')
@@ -394,11 +695,9 @@ class TrackerUI(ctk.CTk):
         self.exp_val_label.configure(text=f"{current_exp:,} EXP")
         self.exp_pct_label.configure(text=f"[ {current_pct:.2f}% ]")
 
-        # Smooth progress bar
         display_pct = current_pct if current_pct is not None else (bar_pct if bar_pct is not None else 0.0)
         self.exp_progress.set(min(1.0, max(0.0, display_pct / 100.0)))
 
-        # ETA and level-up info
         eta_sec = data.get('eta_seconds')
         self.eta_label.configure(text=f"⏳ Level Up ETA: {self._format_time(eta_sec)}")
         self.lvlup_label.configure(text=f"Level-ups: {data.get('level_ups', 0)}")
@@ -429,11 +728,46 @@ class TrackerUI(ctk.CTk):
         self.session_rate_label.configure(text=f"⚡ Avg Rate: {sess_rate:,} EXP/hr")
         self.session_pct_rate_label.configure(text=f"({sign}{sess_pct_rate:.2f}% / hr)")
 
+        # Update Simulated Hotbar 3x4 Grid
+        if hotbar_data.get('found') and hotbar_data.get('cells'):
+            cells = hotbar_data['cells']
+            quantities = hotbar_data.get('quantities', {})
+
+            # Update selected item quantity label
+            mon_qty = quantities.get(self.selected_cell)
+            self.lbl_current_qty.configure(text=str(mon_qty) if mon_qty is not None else "--")
+
+            # Update each cell button in the 3x4 grid
+            for r in range(3):
+                for c in range(4):
+                    btn = self.grid_buttons.get((r, c))
+                    if not btn:
+                        continue
+                    cell_info = cells[r][c]
+                    crop_bgr = cell_info.get('crop_bgr')
+                    if crop_bgr is not None and crop_bgr.size > 0:
+                        try:
+                            # Resize 31x31 to 38x38 for clean crisp pixel preview
+                            resized = cv2.resize(crop_bgr, (38, 38), interpolation=cv2.INTER_NEAREST)
+                            rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+                            pil_img = Image.fromarray(rgb)
+                            ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(38, 38))
+                            btn.configure(image=ctk_img, text="")
+                            self.cell_cached_images[(r, c)] = ctk_img
+                        except Exception:
+                            pass
+
+                    # Highlight border
+                    if (r, c) == self.selected_cell:
+                        border_col = "#e74c3c" if is_alert else "#f1c40f"
+                        btn.configure(border_width=2, border_color=border_col)
+                    else:
+                        btn.configure(border_width=1, border_color="#383a40")
+
         # Update live preview image if enabled
         if self.preview_shown and 'crop_bgr' in data and data['crop_bgr'] is not None:
             try:
                 crop = data['crop_bgr']
-                # Resize preview for display (e.g. 2x)
                 disp_w = min(400, crop.shape[1] * 2)
                 disp_h = max(20, crop.shape[0] * 2)
                 resized = cv2.resize(crop, (disp_w, disp_h), interpolation=cv2.INTER_NEAREST)

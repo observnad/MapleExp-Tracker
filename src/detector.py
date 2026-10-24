@@ -106,6 +106,12 @@ class ExpDetector:
         if roi_bgr is None or roi_bgr.size == 0:
             return {'success': False, 'reason': 'Empty frame'}
 
+        # Detect black frame / dark map transition screen:
+        # MapleStory clears the frame or fades to black when entering portals.
+        # Preserve lock position without counting as a lost track miss.
+        if float(np.mean(roi_bgr)) < 25.0 or int(np.max(roi_bgr)) < 50:
+            return {'success': False, 'reason': 'Screen is black (map transition / loading)'}
+
         roi_h, roi_w, _ = roi_bgr.shape
 
         # Re-calibrate if window size changed
@@ -146,6 +152,9 @@ class ExpDetector:
                 found, loc, scale, conf = self.calibrate(roi_bgr)
                 if not found:
                     return {'success': False, 'reason': 'Lost track of EXP bar'}
+            elif self.consecutive_misses > 0:
+                # Logo match score was below threshold; do NOT run OCR on stale/dim coordinates
+                return {'success': False, 'reason': 'EXP logo match below threshold'}
 
         exp_x, exp_y = self.locked_loc
         s = self.locked_scale
@@ -160,6 +169,10 @@ class ExpDetector:
             return {'success': False, 'reason': 'Crop out of bounds'}
 
         text_crop = roi_bgr[exp_y:exp_y + text_h, text_x:text_x + text_w]
+
+        # Verify text crop is sufficiently illuminated (reject fade-out / fade-in frames)
+        if float(np.mean(text_crop)) < 25.0 or int(np.max(text_crop)) < 150:
+            return {'success': False, 'reason': 'EXP text crop too dim (transition)'}
 
         # Normalize text crop to 1.0x scale
         if abs(s - 1.0) > 0.05:
@@ -222,14 +235,23 @@ class ExpDetector:
         raw_str = ''.join(recognized)
 
         # Parse number and percentage
-        # Example format: 10,869[37.51%] or 10869[37.51%]
+        # Standard format: 10,869[37.51%] or 10869[37.51%]
         exp_val = None
         exp_pct = None
-        m = re.search(r'([\d,]+)\s*\[?\s*([\d\.]+)\s*\%?\]?', raw_str)
+        # Require opening bracket to prevent digit fusion during fading transitions
+        m = re.search(r'([\d,]+)\s*\[\s*([\d\.]+)\s*\%?\s*\]?', raw_str)
+        if not m:
+            # Fallback only if percentage symbol is explicitly present
+            m = re.search(r'([\d,]+)\s*\[?\s*([\d\.]+)\s*\%', raw_str)
+
         if m:
             try:
-                exp_val = int(m.group(1).replace(',', ''))
-                exp_pct = float(m.group(2))
+                parsed_val = int(m.group(1).replace(',', ''))
+                parsed_pct = float(m.group(2))
+                # Validate realistic percentage range
+                if 0.0 <= parsed_pct <= 100.0 and parsed_val >= 0:
+                    exp_val = parsed_val
+                    exp_pct = parsed_pct
             except ValueError:
                 pass
 
@@ -249,8 +271,12 @@ class ExpDetector:
             if y_count + g_count > 20:
                 bar_pct = round(float(y_count) / (y_count + g_count) * 100.0, 2)
 
-        # Final verification
+        # Final verification: valid EXP value and consistency check against bar fill
         valid = (exp_val is not None)
+        if valid and bar_pct is not None and exp_pct is not None:
+            # If both OCR pct and graphical bar pct are detected, they should not diverge wildly
+            if abs(exp_pct - bar_pct) > 30.0:
+                valid = False
         return {
             'success': valid,
             'exp_value': exp_val,

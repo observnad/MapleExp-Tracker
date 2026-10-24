@@ -2,6 +2,7 @@ import ctypes
 import threading
 import time
 import cv2
+import numpy as np
 
 from src.capture import WindowCapture
 from src.detector import ExpDetector
@@ -184,6 +185,14 @@ class AppController:
                     self.latest_state['status'] = 'MINIMIZED'
                     self.latest_state['details'] = 'Window minimized'
                 time.sleep(1.0)
+                continue
+
+            # Detect black frame / dark map transition screen (portal loading)
+            if float(np.mean(roi_bgr)) < 25.0 or int(np.max(roi_bgr)) < 50:
+                with self._lock:
+                    if self.latest_state['status'] == 'LOCKED':
+                        self.latest_state['details'] = 'Map transition (screen black)...'
+                time.sleep(0.4)
                 continue
 
             # Detect EXP bar and text

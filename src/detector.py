@@ -88,7 +88,7 @@ class ExpDetector:
                 best_scale = s
                 best_loc = max_l
 
-        if best_val >= 0.65:
+        if best_val >= 0.75:
             self.is_locked = True
             self.locked_scale = best_scale
             self.locked_loc = best_loc
@@ -109,7 +109,10 @@ class ExpDetector:
         # Detect black frame / dark map transition screen:
         # MapleStory clears the frame or fades to black when entering portals.
         # Preserve lock position without counting as a lost track miss.
-        if float(np.mean(roi_bgr)) < 25.0 or int(np.max(roi_bgr)) < 50:
+        roi_mean = float(np.mean(roi_bgr))
+        roi_max = int(np.max(roi_bgr))
+        roi_std = float(np.std(roi_bgr))
+        if roi_mean < 30.0 or roi_max < 65 or roi_std < 12.0:
             return {'success': False, 'reason': 'Screen is black (map transition / loading)'}
 
         roi_h, roi_w, _ = roi_bgr.shape
@@ -170,9 +173,9 @@ class ExpDetector:
 
         text_crop = roi_bgr[exp_y:exp_y + text_h, text_x:text_x + text_w]
 
-        # Verify text crop is sufficiently illuminated (reject fade-out / fade-in frames)
-        if float(np.mean(text_crop)) < 25.0 or int(np.max(text_crop)) < 150:
-            return {'success': False, 'reason': 'EXP text crop too dim (transition)'}
+        # Verify text crop is sufficiently illuminated and contrasted (reject fade-out / fade-in frames)
+        if float(np.mean(text_crop)) < 25.0 or int(np.max(text_crop)) < 150 or float(np.std(text_crop)) < 12.0:
+            return {'success': False, 'reason': 'EXP text crop too dim or low contrast (transition)'}
 
         # Normalize text crop to 1.0x scale
         if abs(s - 1.0) > 0.05:
@@ -223,11 +226,17 @@ class ExpDetector:
                     if diff < best_diff:
                         best_diff = diff
                         best_c = c
+            # Strict tolerance: legitimate MapleStory characters match with diff <= 3
+            if best_diff > 3:
+                return '?'
             return best_c
 
         recognized = []
         for s_x, e_x in segments:
             ch = match_char(bin_img[:, s_x:e_x])
+            if ch == '?':
+                # Unknown character or noise artifact detected
+                return {'success': False, 'reason': 'Unrecognized character or noise artifact in EXP text'}
             recognized.append(ch)
             if ch == ']':
                 break
@@ -268,14 +277,15 @@ class ExpDetector:
             gray_px = (np.abs(mid_row[:, 2].astype(int) - mid_row[:, 1].astype(int)) < 20) & (mid_row[:, 0] > 130) & (mid_row[:, 0] < 230)
             y_count = np.sum(yellow)
             g_count = np.sum(gray_px)
-            if y_count + g_count > 20:
+            if y_count + g_count >= int(15 * s):
                 bar_pct = round(float(y_count) / (y_count + g_count) * 100.0, 2)
 
-        # Final verification: valid EXP value and consistency check against bar fill
-        valid = (exp_val is not None)
-        if valid and bar_pct is not None and exp_pct is not None:
-            # If both OCR pct and graphical bar pct are detected, they should not diverge wildly
-            if abs(exp_pct - bar_pct) > 30.0:
+        # Final verification: valid EXP value and bar presence cross-check
+        bar_present = (bar_pct is not None)
+        valid = (exp_val is not None) and bar_present
+        if valid and exp_pct is not None:
+            # If both OCR pct and graphical bar pct are detected, they must be consistent
+            if abs(exp_pct - bar_pct) > 20.0:
                 valid = False
         return {
             'success': valid,

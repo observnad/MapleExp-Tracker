@@ -384,12 +384,26 @@ class HotbarDetector:
                 qty = parse_cell_quantity(cell_bgr)
                 quantities[(r_idx, c_idx)] = qty
 
+                # Extract un-downsampled native resolution crop for crisp UI display
+                if abs(best_scale - 1.0) > 0.05:
+                    sr1 = max(0, int(round(r1 * best_scale)))
+                    sr2 = min(grid_crop.shape[0], int(round(r2 * best_scale)))
+                    sc1 = max(0, int(round(c1 * best_scale)))
+                    sc2 = min(grid_crop.shape[1], int(round(c2 * best_scale)))
+                    if sr2 > sr1 and sc2 > sc1:
+                        native_crop = grid_crop[sr1:sr2, sc1:sc2].copy()
+                    else:
+                        native_crop = cell_bgr
+                else:
+                    native_crop = cell_bgr
+
                 row_cells.append({
                     'row': r_idx,
                     'col': c_idx,
                     'key': KEY_NAMES[r_idx][c_idx],
                     'quantity': qty,
-                    'crop_bgr': cell_bgr
+                    'crop_bgr': native_crop,
+                    'norm_crop_bgr': cell_bgr
                 })
             cells.append(row_cells)
 

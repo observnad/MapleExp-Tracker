@@ -65,6 +65,7 @@ class AppController:
             'session_pct_rate_hr': 0.0,
             'eta_seconds': None,
             'level_ups': 0,
+            'anomalies_corrected': 0,
             'crop_bgr': None,
             'hotbar': {
                 'found': False,
@@ -187,12 +188,15 @@ class AppController:
                 time.sleep(1.0)
                 continue
 
-            # Detect black frame / dark map transition screen (portal loading)
-            if float(np.mean(roi_bgr)) < 25.0 or int(np.max(roi_bgr)) < 50:
+            # Detect black frame / dark map transition screen (portal loading or fading)
+            roi_mean = float(np.mean(roi_bgr))
+            roi_max = int(np.max(roi_bgr))
+            roi_std = float(np.std(roi_bgr))
+            if roi_mean < 30.0 or roi_max < 65 or roi_std < 12.0:
                 with self._lock:
                     if self.latest_state['status'] == 'LOCKED':
                         self.latest_state['details'] = 'Map transition (screen black)...'
-                time.sleep(0.4)
+                time.sleep(0.3)
                 continue
 
             # Detect EXP bar and text
@@ -235,6 +239,7 @@ class AppController:
                     self.latest_state['session_pct_rate_hr'] = session_stats['session_pct_rate_hr']
                     self.latest_state['eta_seconds'] = session_stats['eta_seconds']
                     self.latest_state['level_ups'] = session_stats['level_ups']
+                    self.latest_state['anomalies_corrected'] = session_stats.get('anomalies_corrected', 0)
                     self.latest_state['crop_bgr'] = res.get('crop_bgr')
             else:
                 with self._lock:

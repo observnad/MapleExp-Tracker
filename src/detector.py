@@ -26,7 +26,10 @@ EXP_LOGO_B64 = (
 CHAR_PATTERNS = {
     '0': ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
     '1': ['.#', '##', '.#', '.#', '.#', '.#', '.#'],
-    '2': ['.###.', '#...#', '....#', '..##.', '.#...', '#....', '#####'],
+    '2': [
+        ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'],  # MapleStory standard
+        ['.###.', '#...#', '....#', '..##.', '.#...', '#....', '#####'],  # Variant fallback
+    ],
     '3': ['.###.', '#...#', '....#', '..##.', '....#', '#...#', '.###.'],
     '4': ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'],
     '5': ['#####', '#....', '#....', '.###.', '....#', '#...#', '.###.'],
@@ -50,10 +53,15 @@ class ExpDetector:
         self.exp_tmpl = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         self.tmpl_h, self.tmpl_w, _ = self.exp_tmpl.shape
 
-        # Build boolean template arrays
-        self.char_tmpls = {}
+        # Build boolean template arrays (supports single pattern or list of pattern variants)
+        self.char_tmpls = []
         for char, pat in CHAR_PATTERNS.items():
-            self.char_tmpls[char] = np.array([[c == '#' for c in row] for row in pat], dtype=bool)
+            if len(pat) > 0 and isinstance(pat[0], list):
+                variants = pat
+            else:
+                variants = [pat]
+            for v in variants:
+                self.char_tmpls.append((char, np.array([[c == '#' for c in row] for row in v], dtype=bool)))
 
         # Calibration state
         self.is_locked = False
@@ -213,7 +221,7 @@ class ExpDetector:
             ch, cw = cropped.shape
             best_c = '?'
             best_diff = 9999
-            for c, tmpl in self.char_tmpls.items():
+            for c, tmpl in self.char_tmpls:
                 th, tw = tmpl.shape
                 if abs(ch - th) <= 1 and abs(cw - tw) <= 1:
                     max_h = max(ch, th)
@@ -280,12 +288,11 @@ class ExpDetector:
             if y_count + g_count >= int(15 * s):
                 bar_pct = round(float(y_count) / (y_count + g_count) * 100.0, 2)
 
-        # Final verification: valid EXP value and bar presence cross-check
-        bar_present = (bar_pct is not None)
-        valid = (exp_val is not None) and bar_present
-        if valid and exp_pct is not None:
+        # Final verification: valid EXP value and consistency check against bar fill
+        valid = (exp_val is not None)
+        if valid and bar_pct is not None and exp_pct is not None:
             # If both OCR pct and graphical bar pct are detected, they must be consistent
-            if abs(exp_pct - bar_pct) > 20.0:
+            if abs(exp_pct - bar_pct) > 25.0:
                 valid = False
         return {
             'success': valid,

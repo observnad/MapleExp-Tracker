@@ -46,8 +46,6 @@ class AppController:
                     'threshold': 20,
                     'enabled': False
                 }
-        # Default: enable monitoring on (2, 3) (Pdn / orange 49) with threshold 20
-        self.cell_alerts[(2, 3)] = {'threshold': 20, 'enabled': True}
         self.monitored_cell = (2, 3)
         self.previous_quantities = {}
 

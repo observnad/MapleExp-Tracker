@@ -132,5 +132,32 @@ class TestExpTracker(unittest.TestCase):
         self.assertEqual(tracker.total_gained_exp, 0)
 
 
+
+
+class TestExpDetector(unittest.TestCase):
+    def test_digit_two_and_all_templates(self):
+        from src.detector import ExpDetector
+        det = ExpDetector()
+        chars_found = set(c for c, _ in det.char_tmpls)
+        for expected in "0123456789[],.%":
+            self.assertIn(expected, chars_found)
+
+    def test_detection_on_saved_twenty_pct_capture(self):
+        import cv2
+        import os
+        from src.detector import ExpDetector
+
+        img_path = os.path.join("debug_captures", "exp_twenty_pct.png")
+        if not os.path.exists(img_path):
+            return
+
+        roi = cv2.imread(img_path)
+        det = ExpDetector()
+        res = det.detect(roi, 1922, 1112)
+        self.assertTrue(res["success"], "Detection failed")
+        self.assertEqual(res["exp_value"], 13308)
+        self.assertAlmostEqual(res["exp_pct"], 20.90, places=2)
+
+
 if __name__ == '__main__':
     unittest.main()
